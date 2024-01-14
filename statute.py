@@ -96,6 +96,7 @@ def load_into_db(path: str = DATA_DIR) -> None:
             with open(f"{path}/{f}", "r") as statute_file:
                 first_line = statute_file.readline()
 
+                # Extract the section number and title from the first line.
                 # The first line of the file looks like §{section_number} {section_title}
                 result = re.search(r"§(\S+\.\S+) (.*)", first_line)
                 if result is None:
