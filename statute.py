@@ -61,5 +61,11 @@ def split_tax_code(path: str = TAX_CODE_XHTML_PATH, out_dir=DATA_DIR) -> None:
                 f.close()
 
 
+def load_into_db(path: str = DATA_DIR) -> None:
+    """
+    """
+    
+
+
 if __name__ == "__main__":
     split_tax_code()
