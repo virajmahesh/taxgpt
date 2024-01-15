@@ -9,16 +9,18 @@
 import os
 import re
 import json
+from sqlalchemy import Engine
 import tiktoken
 import together
 import numpy as np
 from tqdm import tqdm
 from enum import Enum
+from typing import Any
 from openai import OpenAI
 from bs4 import BeautifulSoup
 import matplotlib.pyplot as plt
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlmodel import SQLModel, Field, create_engine, Session, select, ARRAY
-from typing import Any
 
 
 #########################
@@ -46,22 +48,38 @@ DB_PATH = "statute.db"
 SQL_ENGINE_PATH = f"{SQL_ENGINE}:///{DB_PATH}"
 
 
-class Clients(str, Enum):
+class Providers(str, Enum):
     """
-    A list of API clients that can be used to generate embeddings.
+    API clients that can be used to generate embeddings.
     """
 
     OPENAI = "openai"
     TOGETHER = "together"
 
 
-class Models(str, Enum):
+class EmbeddingModel:
     """
-    A list of models that can be used to generate embeddings.
+    A model that can be used to generate embeddings.
     """
 
-    OPENAI_ADA_8K = "text-embedding-ada-002"
-    TOGETHER_M2_32K = "togethercomputer/m2-bert-80M-32k-retrieval"
+    name: str = None
+    client: Any = None
+    provider: str = None
+    max_tokens: int = None
+
+
+class OpenAIADA8K(EmbeddingModel):
+    name = "text-embedding-ada-002"
+    client = openai_client
+    provider = Providers.OPENAI
+    max_tokens = 8096
+
+
+class Together32K(EmbeddingModel):
+    name = "togethercomputer/m2-bert-80M-32k-retrieval"
+    client = together_client
+    provider = Providers.TOGETHER
+    max_tokens = 32384
 
 
 class Statute(SQLModel, table=True):
@@ -79,16 +97,16 @@ class Statute(SQLModel, table=True):
 class Embedding(SQLModel, table=True):
     """
     A model representing a chunk of text from a statute and it's embedding.
+
+    Primary key: (id, model, provider)
     """
 
-    id: int = Field(
-        default=None, primary_key=True
-    )  # Uniquely identifies a chunk-statute pair
+    id: int = Field(default=None, primary_key=True)
     statute_id: int = Field(default=None, foreign_key="statute.id")
     text: str = Field(default=None)
     token_count: int = Field(default=0)
-    model: str = Field(default=None, primary_key=True)
-    client: str = Field(default=None, primary_key=True)
+    model: str = Field(default=None)
+    provider: str = Field(default=None)
     embedding_vector: str = Field(default=None)
 
 
@@ -271,21 +289,56 @@ def embed_statutes_together_API(offset: int = 0):
                 text=s.text,
                 token_count=s.token_count,
                 model=Models.TOGETHER_M2_32K,
-                client=Clients.TOGETHER,
+                provider=Providers.TOGETHER,
                 embedding_vector=json.dumps(e.tolist()),
             )
             session.add(embedding)
             session.commit()
 
 
-def embed_statutes_openai_API(offset: int = 0):
+def embed_statutes(model: EmbeddingModel, offset: int = 0) -> None:
     """
     Embed all statutes using the OpenAI API. The statutes are split into chunks
     of 8096 tokens, and each chunk is embedded separately.
 
+    :model: The model to use to generate the embeddings.
+
     :offset: The offset to start at. This is useful if the embedding process
     is interrupted, and needs to be restarted from a specific point.
     """
+
+    def embed_statute(s, model: EmbeddingModel, engine: Engine):
+        """
+        Embed :s: using the specified model.
+
+        :s: The statute to embed.
+        :model: The model to use to generate the embeddings.
+        :progress: A tqdm object to track progress.
+
+        :return: The id of the next chunk.
+        """
+        # Skip empty statutes
+        if s.text.strip() == "":
+            return
+
+        chunks = split_text_to_chunks(s.text, model.max_tokens)
+
+        with Session(engine) as session:
+            # Iterate through each chunk and embed it
+            for c in chunks:
+                e = embed_text(c, model.client, model.name)
+                embedding = Embedding(
+                    statute_id=s.id,
+                    text=c,
+                    token_count=chunk_length(c),
+                    model=model.name,
+                    provider=model.provider,
+                    embedding_vector=json.dumps(e.tolist()),
+                )
+                session.add(embedding)
+            session.commit()  # Only commit once the entire statute has been embdded
+            progress.update(1)
+
     engine = create_engine(SQL_ENGINE_PATH)
     SQLModel.metadata.create_all(engine)
 
@@ -293,32 +346,17 @@ def embed_statutes_openai_API(offset: int = 0):
         statutes = session.exec(select(Statute).offset(offset)).all()
 
         # Generate embeddings for all statutes
-        chunk_id = 0
-        for s in tqdm(statutes):  # TODO: Print progress to the terminal
-            # Skip empty statutes
-            if s.text.strip() == "":
-                continue
-
-            chunks = split_text_to_chunks(s.text, 8096)
-
-            # Iterate through each chunk and embed it
-            for i, c in enumerate(chunks):
-                e = embed_text(c, openai_client, OPENAI_EMBED_MODEL)
-                embedding = Embedding(
-                    id=chunk_id,
-                    statute_id=s.id,
-                    text=c,
-                    token_count=s.token_count,
-                    model=Models.OPENAI_ADA_8K,
-                    client=Clients.OPENAI,
-                    embedding_vector=json.dumps(e.tolist()),
-                )
-                session.add(embedding)
-                session.commit()
-                chunk_id += 1
+        # Each thread is given one full statute to deal with.
+        with ThreadPoolExecutor(max_workers=10) as t:
+            with tqdm(total=len(statutes)) as progress:
+                futures = [t.submit(embed_statute, s, model, engine) for s in statutes]
+                for _ in as_completed(futures):
+                    progress.update(1)
 
 
-def generate_embedding_dump(path: str = DATA_DIR, client: str = Clients.OPENAI) -> None:
+def generate_embedding_dump(
+    path: str = DATA_DIR, model: EmbeddingModel = OpenAIADA8K
+) -> None:
     """
     Loads the generated embeddings from the database, packs them into a numpy
     matrix and saves them to a file.
@@ -328,7 +366,7 @@ def generate_embedding_dump(path: str = DATA_DIR, client: str = Clients.OPENAI) 
     engine = create_engine(SQL_ENGINE_PATH)
     with Session(engine) as session:
         embeddings = session.exec(
-            select(Embedding).where(Embedding.client == client)
+            select(Embedding).where(Embedding.provider == model.provider)
         ).all()
 
         # Generate a list of embeddings
@@ -338,7 +376,7 @@ def generate_embedding_dump(path: str = DATA_DIR, client: str = Clients.OPENAI) 
 
         query = """What is the safe harbour rule for underpayment of taxes?"""
 
-        e1 = embed_text(query, openai_client, OPENAI_EMBED_MODEL)
+        e1 = embed_text(query, model.client, model.name)
         e1 /= np.linalg.norm(e1)
         print(e1.shape)
 
@@ -360,7 +398,6 @@ def generate_embedding_dump(path: str = DATA_DIR, client: str = Clients.OPENAI) 
 
 
 if __name__ == "__main__":
-    #load_into_db()
-    #embed_statutes_together_API()
-    embed_statutes_openai_API()
-    generate_embedding_dump()
+    load_into_db()
+    embed_statutes(model=Together32K)
+    generate_embedding_dump(model=Together32K)
