@@ -68,6 +68,11 @@ class EmbeddingModel:
     max_tokens: int = None
 
 
+    def embed_text(cls, s: str):
+        response = cls.client.embeddings.create(input=s, model=cls.name)
+        return np.asarray(response.data[0].embedding)
+
+
 class OpenAIADA8K(EmbeddingModel):
     name = "text-embedding-ada-002"
     client = openai_client
@@ -80,6 +85,13 @@ class Together32K(EmbeddingModel):
     client = together_client
     provider = Providers.TOGETHER
     max_tokens = 32384
+
+
+class Together8K(EmbeddingModel):
+    name = "togethercomputer/m2-bert-80M-8k-retrieval"
+    client = together_client
+    provider = Providers.TOGETHER
+    max_tokens = 8192
 
 
 class Statute(SQLModel, table=True):
@@ -337,7 +349,6 @@ def embed_statutes(model: EmbeddingModel, offset: int = 0) -> None:
                 )
                 session.add(embedding)
             session.commit()  # Only commit once the entire statute has been embdded
-            progress.update(1)
 
     engine = create_engine(SQL_ENGINE_PATH)
     SQLModel.metadata.create_all(engine)
@@ -366,7 +377,7 @@ def generate_embedding_dump(
     engine = create_engine(SQL_ENGINE_PATH)
     with Session(engine) as session:
         embeddings = session.exec(
-            select(Embedding).where(Embedding.provider == model.provider)
+            select(Embedding).where(Embedding.provider == model.provider).order_by(Embedding.id)
         ).all()
 
         # Generate a list of embeddings
@@ -374,7 +385,7 @@ def generate_embedding_dump(
         for e in embeddings:
             embedding_list.append(json.loads(e.embedding_vector))
 
-        query = """What is the safe harbour rule for underpayment of taxes?"""
+        query = """What is the personal income tax rate?"""
 
         e1 = embed_text(query, model.client, model.name)
         e1 /= np.linalg.norm(e1)
@@ -389,7 +400,9 @@ def generate_embedding_dump(
         # order of similarity
         similarities = np.dot(e1, embedding_matrix)
         indices = np.argsort(similarities)[::-1]
+        chunk_id = np.asarray([e.id for e in embeddings])
         print(indices[:100])
+        print(chunk_id[indices[:100]])
         print(similarities[indices[:100]])
         print(embeddings[indices[0]].text)
 
@@ -398,6 +411,6 @@ def generate_embedding_dump(
 
 
 if __name__ == "__main__":
-    load_into_db()
-    embed_statutes(model=Together32K)
-    generate_embedding_dump(model=Together32K)
+    #load_into_db()
+    embed_statutes(model=Together8K)
+    generate_embedding_dump(model=Together8K)
