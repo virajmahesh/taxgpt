@@ -1,6 +1,6 @@
 """
-    This file contains utility functions to generate embeddings for the US tax
-    code. We assume the tax code has already been downloaded in XHTML format 
+    This file contains utility functions to process the tax code and generate embeddings.
+    We assume the tax code has already been downloaded in XHTML format 
     from https://uscode.house.gov/download/download.shtml.
 
     Author: Viraj Mahesh (virajmahesh@gmail.com)
@@ -8,12 +8,16 @@
 
 import os
 import re
+import json
 import tiktoken
+import together
 import numpy as np
+from enum import Enum
 from openai import OpenAI
 from bs4 import BeautifulSoup
 import matplotlib.pyplot as plt
-from sqlmodel import SQLModel, Field, create_engine, Session, select
+from sqlmodel import SQLModel, Field, create_engine, Session, select, ARRAY
+from typing import Any
 
 
 #########################
@@ -25,14 +29,38 @@ DATA_DIR = "data"
 TAX_CODE_XHTML_PATH = f"{DATA_DIR}/title26.htm"
 
 # OpenAI Config
-EMBED_MODEL = "text-embedding-ada-002"  # Set this explicitly so that it doesn't change automatically
-encoder = tiktoken.encoding_for_model(EMBED_MODEL)
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+OPENAI_EMBED_MODEL = "text-embedding-ada-002"  # Set this explicitly so that it doesn't change automatically
+openai_encoder = tiktoken.encoding_for_model(OPENAI_EMBED_MODEL)
+openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+# Together Config
+TOGETHER_EMBED_MODEL = "togethercomputer/m2-bert-80M-32k-retrieval"
+together.api_key = os.environ["TOGETHER_API_KEY"]
+together_client = together.Together()
+
 
 # SQL Enginge for SQLModel
 SQL_ENGINE = "sqlite"
 DB_PATH = "statute.db"
 SQL_ENGINE_PATH = f"{SQL_ENGINE}:///{DB_PATH}"
+
+
+class Clients(str, Enum):
+    """
+    A list of API clients that can be used to generate embeddings.
+    """
+
+    OPENAI = "openai"
+    TOGETHER = "together"
+
+
+class Models(str, Enum):
+    """
+    A list of models that can be used to generate embeddings.
+    """
+
+    OPENAI_ADA_8K = "text-embedding-ada-002"
+    TOGETHER_M2_32K = "togethercomputer/m2-bert-80M-32k-retrieval"
 
 
 class Statute(SQLModel, table=True):
@@ -45,6 +73,25 @@ class Statute(SQLModel, table=True):
     title: str = Field(default=None)
     text: str = Field(default=None)
     token_count: int = Field(default=0)
+
+
+class Embedding(SQLModel, table=True):
+    """
+    A model representing a chunk of text from a statute and it's embedding.
+    """
+
+    id: int = Field(
+        default=None, primary_key=True
+    )  # Uniquely identifies a chunk-statute pair
+    statute_id: int = Field(default=None, foreign_key="statute.id")
+    chunk_id: int = Field(
+        default=None
+    )  # The relative position of the chunk in the statute
+    text: str = Field(default=None)
+    token_count: int = Field(default=0)
+    model: str = Field(default=None)
+    client: str = Field(default=None)
+    embedding_vector: str = Field(default=None)
 
 
 def split_tax_code(path: str = TAX_CODE_XHTML_PATH, out_dir=DATA_DIR) -> None:
@@ -131,7 +178,7 @@ def load_into_db(path: str = DATA_DIR) -> None:
 
                 # Read the rest of the file, and remove any leading or trailing whitespace
                 text = statute_file.read().strip()
-                token_count = len(encoder.encode(text))
+                token_count = len(openai_encoder.encode(text))
                 statute = Statute(
                     section=section, title=title, text=text, token_count=token_count
                 )
@@ -156,13 +203,48 @@ def visualize_token_count() -> None:
         plt.show()
 
 
-def embed_text_openai(s: str, model: str = EMBED_MODEL) -> np.ndarray:
+def embed_text(s: str, client: Any, model: str) -> np.ndarray:
     """
-    Generate a vector embedding for :s: using the OpenAI API.
+    Generate a vector embedding for :s: using the specified client and model.
     """
     response = client.embeddings.create(input=s, model=model)
     return np.asarray(response.data[0].embedding)
 
 
+def similiarity(a: np.ndarray, b: np.ndarray) -> float:
+    """
+    Compute the cosine similarity between two vectors.
+    """
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+
+def embed_statutes_together_API():
+    engine = create_engine(SQL_ENGINE_PATH)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        statutes = session.exec(select(Statute)).all()
+        
+        # Generate embeddings for all statutes
+        for s in statutes:
+            # Skip empty statutes
+            if s.text.strip() == "":
+                continue
+            
+            e = embed_text(s.text, together_client, TOGETHER_EMBED_MODEL)
+            embedding = Embedding(
+                statute_id=s.id,
+                chunk_id=0,
+                text=s.text,
+                token_count=s.token_count,
+                model=Models.TOGETHER_M2_32K,
+                client=Clients.TOGETHER,
+                embedding_vector=json.dumps(e.tolist()),  # Store embeddings as a JSON array
+            )
+            session.add(embedding)
+            session.commit()
+
+
 if __name__ == "__main__":
-    visualize_token_count()
+    load_into_db()
+    embed_statutes_together_API()
