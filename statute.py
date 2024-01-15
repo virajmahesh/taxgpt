@@ -191,7 +191,7 @@ def embed_statute(s, model: EmbeddingModel, engine: Engine):
         session.commit()  # Only commit once the entire statute has been embdded
 
 
-def embed_statutes(model: EmbeddingModel, offset: int = 0) -> None:
+def embed_statutes(model: EmbeddingModel, offset: int = 0, max_workers: int = 10) -> None:
     """
     Embed all statutes using the OpenAI API. The statutes are split into chunks
     of 8096 tokens, and each chunk is embedded separately.
@@ -200,6 +200,8 @@ def embed_statutes(model: EmbeddingModel, offset: int = 0) -> None:
 
     :offset: The offset to start at. This is useful if the embedding process
     is interrupted, and needs to be restarted from a specific point.
+
+    :max_workers: The max number of threads to use.
     """
 
     engine = create_engine(SQL_ENGINE_PATH)
@@ -210,7 +212,7 @@ def embed_statutes(model: EmbeddingModel, offset: int = 0) -> None:
 
         # Generate embeddings for all statutes
         # Each thread is given one full statute to deal with.
-        with ThreadPoolExecutor(max_workers=30) as t:
+        with ThreadPoolExecutor(max_workers=max_workers) as t:
             with tqdm(total=len(statutes)) as progress:
                 futures = [t.submit(embed_statute, s, model, engine) for s in statutes]
                 for _ in as_completed(futures):
@@ -301,7 +303,8 @@ def generate_embedding_dump(
 
 if __name__ == "__main__":
     # load_into_db()
-    #embed_statutes(model=UAELargeV1)
-    #generate_embedding_dump(model=UAELargeV1)
+    embed_statutes(model=Together8K)
+    generate_embedding_dump(model=Together8K)
     #delete_failed_embedding(UAELargeV1)
-    #delete_all_embeddings(UAELargeV1)
+    #delete_all_embeddings(Together32K)
+    #delete_all_embeddings(Together8K)

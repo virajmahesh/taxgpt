@@ -53,21 +53,21 @@ class OpenAIADA8K(EmbeddingModel):
     name = "text-embedding-ada-002"
     client = openai_client
     provider = Providers.OPENAI
-    max_tokens = 8096
+    max_tokens = 8000
 
 
 class Together32K(EmbeddingModel):
     name = "togethercomputer/m2-bert-80M-32k-retrieval"
     client = together_client
     provider = Providers.TOGETHER
-    max_tokens = 32384
+    max_tokens = 32000
 
 
 class Together8K(EmbeddingModel):
     name = "togethercomputer/m2-bert-80M-8k-retrieval"
     client = together_client
     provider = Providers.TOGETHER
-    max_tokens = 8192
+    max_tokens = 8000
 
 
 class UAELarge(EmbeddingModel):
