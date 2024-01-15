@@ -210,12 +210,42 @@ def embed_statutes(model: EmbeddingModel, offset: int = 0) -> None:
 
         # Generate embeddings for all statutes
         # Each thread is given one full statute to deal with.
-        with ThreadPoolExecutor(max_workers=10) as t:
+        with ThreadPoolExecutor(max_workers=30) as t:
             with tqdm(total=len(statutes)) as progress:
                 futures = [t.submit(embed_statute, s, model, engine) for s in statutes]
                 for _ in as_completed(futures):
                     progress.update(1)
 
+
+def delete_failed_embedding(model: EmbeddingModel) -> None:
+    """
+    Delete embeddings that failed the first time.
+    """
+    engine = create_engine(SQL_ENGINE_PATH)
+    with Session(engine) as session:
+        chunks = session.exec(
+            select(Embedding)
+            .where(Embedding.model == model.name)
+            .where(Embedding.provider == model.provider)
+            .where(Embedding.embedding_vector == "[]")
+        ).all()
+        [session.delete(c) for c in chunks]
+        session.commit()
+
+
+def delete_all_embeddings(model: EmbeddingModel) -> None:
+    """
+    Delete all embeddings for a model.
+    """
+    engine = create_engine(SQL_ENGINE_PATH)
+    with Session(engine) as session:
+        chunks = session.exec(
+            select(Embedding)
+            .where(Embedding.model == model.name)
+            .where(Embedding.provider == model.provider)
+        ).all()
+        [session.delete(c) for c in chunks]
+        session.commit()
 
 def generate_embedding_dump(
     path: str = DATA_DIR, model: EmbeddingModel = OpenAIADA8K
@@ -246,8 +276,10 @@ def generate_embedding_dump(
         e1 /= np.linalg.norm(e1)
         print(e1.shape)
 
+        print(embedding_list[0])
         # Convert the list to a numpy array
         embedding_matrix = np.asarray(embedding_list).T
+
         embedding_matrix /= np.linalg.norm(embedding_matrix, axis=0)
         print(embedding_matrix.shape)
 
@@ -260,6 +292,8 @@ def generate_embedding_dump(
         print(chunk_id[indices[:100]])
         print(similarities[indices[:100]])
         print(embeddings[indices[0]].text)
+        print(embeddings[indices[1]].text)
+        print(embeddings[indices[2]].text)
 
         # Save the matrix to a file
         np.save(f"{path}/together_embeddings.npy", embedding_matrix)
@@ -267,5 +301,7 @@ def generate_embedding_dump(
 
 if __name__ == "__main__":
     # load_into_db()
-    embed_statutes(model=UAELargeV1)
-    generate_embedding_dump(model=UAELargeV1)
+    #embed_statutes(model=UAELargeV1)
+    #generate_embedding_dump(model=UAELargeV1)
+    #delete_failed_embedding(UAELargeV1)
+    #delete_all_embeddings(UAELargeV1)

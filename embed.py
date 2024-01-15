@@ -70,8 +70,15 @@ class Together8K(EmbeddingModel):
     max_tokens = 8192
 
 
-class UAELargeV1(EmbeddingModel):
+class UAELarge(EmbeddingModel):
     name = "WhereIsAI/UAE-Large-V1"
+    client = together_client
+    provider = Providers.TOGETHER
+    max_tokens = 384  # Use a slightly smaller chunk size
+
+
+class BAAILargeV1_5(EmbeddingModel):
+    name = "BAAI/bge-large-en-v1.5"
     client = together_client
     provider = Providers.TOGETHER
     max_tokens = 384  # Use a slightly smaller chunk size
@@ -88,6 +95,23 @@ def chunk_length(c: str) -> int:
     return len(openai_encoder.encode(c))
 
 
+def encode_text(text: str) -> list:
+    return openai_encoder.encode(text)
+
+
+def decode_single_token_str(token: int) -> str:
+    return openai_encoder.decode_single_token_bytes(token).decode("utf-8")
+
+
+def tokenize_text(text: str) -> list:
+    """
+    Tokenize :text: using the OpenAI encoder.
+    """
+    tokens = encode_text(text)
+    tokens = map(decode_single_token_str, tokens)
+    return list(tokens)
+
+
 def split_text_to_chunks(text: str, chunk_size: int) -> list:
     """
     Split :text: into chunks of size :chunk_size:. Text is split line by line.
@@ -98,9 +122,9 @@ def split_text_to_chunks(text: str, chunk_size: int) -> list:
     chunk = ""
 
     # Iterate through each line in the text
-    for c in text.split("\n"):
-        c = c.strip()
-        if c == "":
+    tokens = tokenize_text(text)
+    for c in tokens:
+        if c.strip() == "":
             continue
 
         # If adding the next line makes the chunk too long, break the chunk
