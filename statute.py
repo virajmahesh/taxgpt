@@ -12,6 +12,7 @@ import json
 import tiktoken
 import together
 import numpy as np
+from tqdm import tqdm
 from enum import Enum
 from openai import OpenAI
 from bs4 import BeautifulSoup
@@ -84,13 +85,10 @@ class Embedding(SQLModel, table=True):
         default=None, primary_key=True
     )  # Uniquely identifies a chunk-statute pair
     statute_id: int = Field(default=None, foreign_key="statute.id")
-    chunk_id: int = Field(
-        default=None
-    )  # The relative position of the chunk in the statute
     text: str = Field(default=None)
     token_count: int = Field(default=0)
-    model: str = Field(default=None)
-    client: str = Field(default=None)
+    model: str = Field(default=None, primary_key=True)
+    client: str = Field(default=None, primary_key=True)
     embedding_vector: str = Field(default=None)
 
 
@@ -140,7 +138,7 @@ def split_tax_code(path: str = TAX_CODE_XHTML_PATH, out_dir=DATA_DIR) -> None:
 
 def load_into_db(path: str = DATA_DIR) -> None:
     """
-    Load the statute text at :path: into a SQLite database.
+    Load the statute text in directory specified by :path: into a SQLite database.
     """
 
     def get_section_and_title(first_line: str) -> tuple:
@@ -203,6 +201,35 @@ def visualize_token_count() -> None:
         plt.show()
 
 
+def chunk_length(c: str) -> int:
+    """Returns the length of a chunk in tokens."""
+    return len(openai_encoder.encode(c))
+
+
+def split_text_to_chunks(text: str, chunk_size: int) -> list:
+    """
+    Split :text: into chunks of size :chunk_size:. Text is split line by line.
+    """
+    result = []
+    chunk = ""
+    for c in text.split("\n"):
+        c = c.strip()
+        if c == "":
+            continue
+
+        # If adding the next line makes the chunk too long, break the chunk at this
+        # point and start a new one.
+        if chunk_length(chunk + c) > chunk_size:
+            result.append(chunk)
+            chunk = c
+        else:
+            chunk += c
+
+    # Add the last chunk
+    result.append(chunk)
+    return result
+
+
 def embed_text(s: str, client: Any, model: str) -> np.ndarray:
     """
     Generate a vector embedding for :s: using the specified client and model.
@@ -218,33 +245,122 @@ def similiarity(a: np.ndarray, b: np.ndarray) -> float:
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 
-def embed_statutes_together_API():
+def embed_statutes_together_API(offset: int = 0):
+    """
+    Embed all statutes using the Together API.
+
+    :offset: The offset to start at. This is useful if the embedding process
+    is interrupted, and needs to be restarted from a specific point.
+    """
     engine = create_engine(SQL_ENGINE_PATH)
     SQLModel.metadata.create_all(engine)
 
     with Session(engine) as session:
-        statutes = session.exec(select(Statute)).all()
-        
+        statutes = session.exec(select(Statute).offset(offset)).all()
+
         # Generate embeddings for all statutes
-        for s in statutes:
+        for i, s in enumerate(tqdm(statutes)):  # TODO: Print progress to the terminal
             # Skip empty statutes
             if s.text.strip() == "":
                 continue
-            
+
             e = embed_text(s.text, together_client, TOGETHER_EMBED_MODEL)
             embedding = Embedding(
+                id=i,
                 statute_id=s.id,
-                chunk_id=0,
                 text=s.text,
                 token_count=s.token_count,
                 model=Models.TOGETHER_M2_32K,
                 client=Clients.TOGETHER,
-                embedding_vector=json.dumps(e.tolist()),  # Store embeddings as a JSON array
+                embedding_vector=json.dumps(e.tolist()),
             )
             session.add(embedding)
             session.commit()
 
 
+def embed_statutes_openai_API(offset: int = 0):
+    """
+    Embed all statutes using the OpenAI API. The statutes are split into chunks
+    of 8096 tokens, and each chunk is embedded separately.
+
+    :offset: The offset to start at. This is useful if the embedding process
+    is interrupted, and needs to be restarted from a specific point.
+    """
+    engine = create_engine(SQL_ENGINE_PATH)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        statutes = session.exec(select(Statute).offset(offset)).all()
+
+        # Generate embeddings for all statutes
+        chunk_id = 0
+        for s in tqdm(statutes):  # TODO: Print progress to the terminal
+            # Skip empty statutes
+            if s.text.strip() == "":
+                continue
+
+            chunks = split_text_to_chunks(s.text, 8096)
+
+            # Iterate through each chunk and embed it
+            for i, c in enumerate(chunks):
+                e = embed_text(c, openai_client, OPENAI_EMBED_MODEL)
+                embedding = Embedding(
+                    id=chunk_id,
+                    statute_id=s.id,
+                    text=c,
+                    token_count=s.token_count,
+                    model=Models.OPENAI_ADA_8K,
+                    client=Clients.OPENAI,
+                    embedding_vector=json.dumps(e.tolist()),
+                )
+                session.add(embedding)
+                session.commit()
+                chunk_id += 1
+
+
+def generate_embedding_dump(path: str = DATA_DIR, client: str = Clients.OPENAI) -> None:
+    """
+    Loads the generated embeddings from the database, packs them into a numpy
+    matrix and saves them to a file.
+
+    :path: The directory to save the embeddings to.
+    """
+    engine = create_engine(SQL_ENGINE_PATH)
+    with Session(engine) as session:
+        embeddings = session.exec(
+            select(Embedding).where(Embedding.client == client)
+        ).all()
+
+        # Generate a list of embeddings
+        embedding_list = []
+        for e in embeddings:
+            embedding_list.append(json.loads(e.embedding_vector))
+
+        query = """What is the safe harbour rule for underpayment of taxes?"""
+
+        e1 = embed_text(query, openai_client, OPENAI_EMBED_MODEL)
+        e1 /= np.linalg.norm(e1)
+        print(e1.shape)
+
+        # Convert the list to a numpy array
+        embedding_matrix = np.asarray(embedding_list).T
+        embedding_matrix /= np.linalg.norm(embedding_matrix, axis=0)
+        print(embedding_matrix.shape)
+
+        # Print the indices of the most similar statutes to e1, in descending
+        # order of similarity
+        similarities = np.dot(e1, embedding_matrix)
+        indices = np.argsort(similarities)[::-1]
+        print(indices[:100])
+        print(similarities[indices[:100]])
+        print(embeddings[indices[0]].text)
+
+        # Save the matrix to a file
+        np.save(f"{path}/together_embeddings.npy", embedding_matrix)
+
+
 if __name__ == "__main__":
-    load_into_db()
-    embed_statutes_together_API()
+    #load_into_db()
+    #embed_statutes_together_API()
+    embed_statutes_openai_API()
+    generate_embedding_dump()
