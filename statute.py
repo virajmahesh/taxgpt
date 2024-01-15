@@ -1,7 +1,6 @@
 """
-    This file contains utility functions to process the tax code and generate embeddings.
-    We assume the tax code has already been downloaded in XHTML format 
-    from https://uscode.house.gov/download/download.shtml.
+    Utility functions to load the tax code into a database, and generate
+    embeddings for each section.
 
     Author: Viraj Mahesh (virajmahesh@gmail.com)
 """
@@ -11,6 +10,7 @@ import re
 import json
 from sqlalchemy import Engine
 from config import *
+from embed import *
 import numpy as np
 from tqdm import tqdm
 from enum import Enum
@@ -20,52 +20,6 @@ from bs4 import BeautifulSoup
 import matplotlib.pyplot as plt
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlmodel import SQLModel, Field, create_engine, Session, select
-
-
-class Providers(str, Enum):
-    """
-    API clients that can be used to generate embeddings.
-    """
-
-    OPENAI = "openai"
-    TOGETHER = "together"
-
-
-class EmbeddingModel:
-    """
-    A model that can be used to generate embeddings.
-    """
-
-    name: str = None
-    client: Any = None
-    provider: str = None
-    max_tokens: int = None
-
-
-    def embed_text(cls, s: str):
-        response = cls.client.embeddings.create(input=s, model=cls.name)
-        return np.asarray(response.data[0].embedding)
-
-
-class OpenAIADA8K(EmbeddingModel):
-    name = "text-embedding-ada-002"
-    client = openai_client
-    provider = Providers.OPENAI
-    max_tokens = 8096
-
-
-class Together32K(EmbeddingModel):
-    name = "togethercomputer/m2-bert-80M-32k-retrieval"
-    client = together_client
-    provider = Providers.TOGETHER
-    max_tokens = 32384
-
-
-class Together8K(EmbeddingModel):
-    name = "togethercomputer/m2-bert-80M-8k-retrieval"
-    client = together_client
-    provider = Providers.TOGETHER
-    max_tokens = 8192
 
 
 class Statute(SQLModel, table=True):
@@ -205,48 +159,36 @@ def visualize_token_count() -> None:
         plt.show()
 
 
-def chunk_length(c: str) -> int:
-    """Returns the length of a chunk in tokens."""
-    return len(openai_encoder.encode(c))
-
-
-def split_text_to_chunks(text: str, chunk_size: int) -> list:
+def embed_statute(s, model: EmbeddingModel, engine: Engine):
     """
-    Split :text: into chunks of size :chunk_size:. Text is split line by line.
+    Embed :s: using the specified model, and store it in the database.
+
+    :s: The statute to embed.
+    :model: The model to use to generate the embeddings.
+    :progress: A tqdm object to track progress.
+
+    :return: The id of the next chunk.
     """
-    result = []
-    chunk = ""
-    for c in text.split("\n"):
-        c = c.strip()
-        if c == "":
-            continue
+    # Skip empty statutes
+    if s.text.strip() == "":
+        return
 
-        # If adding the next line makes the chunk too long, break the chunk at this
-        # point and start a new one.
-        if chunk_length(chunk + c) > chunk_size:
-            result.append(chunk)
-            chunk = c
-        else:
-            chunk += c
+    chunks = split_text_to_chunks(s.text, model.max_tokens)
 
-    # Add the last chunk
-    result.append(chunk)
-    return result
-
-
-def embed_text(s: str, client: Any, model: str) -> np.ndarray:
-    """
-    Generate a vector embedding for :s: using the specified client and model.
-    """
-    response = client.embeddings.create(input=s, model=model)
-    return np.asarray(response.data[0].embedding)
-
-
-def similiarity(a: np.ndarray, b: np.ndarray) -> float:
-    """
-    Compute the cosine similarity between two vectors.
-    """
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+    with Session(engine) as session:
+        # Iterate through each chunk and embed it
+        for c in chunks:
+            e = model.embed_text(c)
+            embedding = Embedding(
+                statute_id=s.id,
+                text=c,
+                token_count=chunk_length(c),
+                model=model.name,
+                provider=model.provider,
+                embedding_vector=json.dumps(e.tolist()),
+            )
+            session.add(embedding)
+        session.commit()  # Only commit once the entire statute has been embdded
 
 
 def embed_statutes(model: EmbeddingModel, offset: int = 0) -> None:
@@ -259,37 +201,6 @@ def embed_statutes(model: EmbeddingModel, offset: int = 0) -> None:
     :offset: The offset to start at. This is useful if the embedding process
     is interrupted, and needs to be restarted from a specific point.
     """
-
-    def embed_statute(s, model: EmbeddingModel, engine: Engine):
-        """
-        Embed :s: using the specified model.
-
-        :s: The statute to embed.
-        :model: The model to use to generate the embeddings.
-        :progress: A tqdm object to track progress.
-
-        :return: The id of the next chunk.
-        """
-        # Skip empty statutes
-        if s.text.strip() == "":
-            return
-
-        chunks = split_text_to_chunks(s.text, model.max_tokens)
-
-        with Session(engine) as session:
-            # Iterate through each chunk and embed it
-            for c in chunks:
-                e = embed_text(c, model.client, model.name)
-                embedding = Embedding(
-                    statute_id=s.id,
-                    text=c,
-                    token_count=chunk_length(c),
-                    model=model.name,
-                    provider=model.provider,
-                    embedding_vector=json.dumps(e.tolist()),
-                )
-                session.add(embedding)
-            session.commit()  # Only commit once the entire statute has been embdded
 
     engine = create_engine(SQL_ENGINE_PATH)
     SQLModel.metadata.create_all(engine)
@@ -318,7 +229,10 @@ def generate_embedding_dump(
     engine = create_engine(SQL_ENGINE_PATH)
     with Session(engine) as session:
         embeddings = session.exec(
-            select(Embedding).where(Embedding.provider == model.provider).order_by(Embedding.id)
+            select(Embedding)
+            .where(Embedding.provider == model.provider)
+            .where(Embedding.model == model.name)
+            .order_by(Embedding.id)
         ).all()
 
         # Generate a list of embeddings
@@ -328,7 +242,7 @@ def generate_embedding_dump(
 
         query = """What is the personal income tax rate?"""
 
-        e1 = embed_text(query, model.client, model.name)
+        e1 = model.embed_text(query)
         e1 /= np.linalg.norm(e1)
         print(e1.shape)
 
@@ -352,6 +266,6 @@ def generate_embedding_dump(
 
 
 if __name__ == "__main__":
-    #load_into_db()
-    #embed_statutes(model=Together8K)
-    generate_embedding_dump(model=Together8K)
+    # load_into_db()
+    embed_statutes(model=UAELargeV1)
+    generate_embedding_dump(model=UAELargeV1)
