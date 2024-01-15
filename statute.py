@@ -10,8 +10,7 @@ import os
 import re
 import json
 from sqlalchemy import Engine
-import tiktoken
-import together
+from config import *
 import numpy as np
 from tqdm import tqdm
 from enum import Enum
@@ -20,32 +19,7 @@ from openai import OpenAI
 from bs4 import BeautifulSoup
 import matplotlib.pyplot as plt
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from sqlmodel import SQLModel, Field, create_engine, Session, select, ARRAY
-
-
-#########################
-# Constants and Globals #
-#########################
-
-# File paths
-DATA_DIR = "data"
-TAX_CODE_XHTML_PATH = f"{DATA_DIR}/title26.htm"
-
-# OpenAI Config
-OPENAI_EMBED_MODEL = "text-embedding-ada-002"  # Set this explicitly so that it doesn't change automatically
-openai_encoder = tiktoken.encoding_for_model(OPENAI_EMBED_MODEL)
-openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-
-# Together Config
-TOGETHER_EMBED_MODEL = "togethercomputer/m2-bert-80M-32k-retrieval"
-together.api_key = os.environ["TOGETHER_API_KEY"]
-together_client = together.Together()
-
-
-# SQL Enginge for SQLModel
-SQL_ENGINE = "sqlite"
-DB_PATH = "statute.db"
-SQL_ENGINE_PATH = f"{SQL_ENGINE}:///{DB_PATH}"
+from sqlmodel import SQLModel, Field, create_engine, Session, select
 
 
 class Providers(str, Enum):
@@ -275,39 +249,6 @@ def similiarity(a: np.ndarray, b: np.ndarray) -> float:
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 
-def embed_statutes_together_API(offset: int = 0):
-    """
-    Embed all statutes using the Together API.
-
-    :offset: The offset to start at. This is useful if the embedding process
-    is interrupted, and needs to be restarted from a specific point.
-    """
-    engine = create_engine(SQL_ENGINE_PATH)
-    SQLModel.metadata.create_all(engine)
-
-    with Session(engine) as session:
-        statutes = session.exec(select(Statute).offset(offset)).all()
-
-        # Generate embeddings for all statutes
-        for i, s in enumerate(tqdm(statutes)):  # TODO: Print progress to the terminal
-            # Skip empty statutes
-            if s.text.strip() == "":
-                continue
-
-            e = embed_text(s.text, together_client, TOGETHER_EMBED_MODEL)
-            embedding = Embedding(
-                id=i,
-                statute_id=s.id,
-                text=s.text,
-                token_count=s.token_count,
-                model=Models.TOGETHER_M2_32K,
-                provider=Providers.TOGETHER,
-                embedding_vector=json.dumps(e.tolist()),
-            )
-            session.add(embedding)
-            session.commit()
-
-
 def embed_statutes(model: EmbeddingModel, offset: int = 0) -> None:
     """
     Embed all statutes using the OpenAI API. The statutes are split into chunks
@@ -412,5 +353,5 @@ def generate_embedding_dump(
 
 if __name__ == "__main__":
     #load_into_db()
-    embed_statutes(model=Together8K)
+    #embed_statutes(model=Together8K)
     generate_embedding_dump(model=Together8K)
