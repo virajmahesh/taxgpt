@@ -3,11 +3,11 @@
 
     Author: Viraj Mahesh (virajmahesh@gmail.com)
 """
-
-from typing import Any
 import tiktoken
+import together
 import numpy as np
 from enum import Enum
+from typing import Any
 
 from config import *
 
@@ -74,7 +74,7 @@ class UAELargeV1(EmbeddingModel):
     name = "WhereIsAI/UAE-Large-V1"
     client = together_client
     provider = Providers.TOGETHER
-    max_tokens = 512
+    max_tokens = 384  # Use a slightly smaller chunk size
 
 
 def chunk_length(c: str) -> int:
@@ -96,6 +96,8 @@ def split_text_to_chunks(text: str, chunk_size: int) -> list:
     """
     result = []
     chunk = ""
+
+    # Iterate through each line in the text
     for c in text.split("\n"):
         c = c.strip()
         if c == "":
