@@ -5,8 +5,6 @@
 """
 
 import os
-import together
-import tiktoken
 from openai import OpenAI
 
 # File paths
