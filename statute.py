@@ -159,7 +159,7 @@ def visualize_token_count() -> None:
         plt.show()
 
 
-def embed_statute(s, model: EmbeddingModel, engine: Engine):
+def embed_statute(s, model: EmbeddingModel, engine: Engine, **kwargs):
     """
     Embed :s: using the specified model, and store it in the database.
 
@@ -178,7 +178,7 @@ def embed_statute(s, model: EmbeddingModel, engine: Engine):
     with Session(engine) as session:
         # Iterate through each chunk and embed it
         for c in chunks:
-            e = model.embed_text(c)
+            e = model.embed_text(c, **kwargs)
             embedding = Embedding(
                 statute_id=s.id,
                 text=c,
@@ -191,7 +191,9 @@ def embed_statute(s, model: EmbeddingModel, engine: Engine):
         session.commit()  # Only commit once the entire statute has been embdded
 
 
-def embed_statutes(model: EmbeddingModel, offset: int = 0, max_workers: int = 10) -> None:
+def embed_statutes(
+    model: EmbeddingModel, offset: int = 0, max_workers: int = 10, **kwargs
+) -> None:
     """
     Embed all statutes using the OpenAI API. The statutes are split into chunks
     of 8096 tokens, and each chunk is embedded separately.
@@ -214,7 +216,9 @@ def embed_statutes(model: EmbeddingModel, offset: int = 0, max_workers: int = 10
         # Each thread is given one full statute to deal with.
         with ThreadPoolExecutor(max_workers=max_workers) as t:
             with tqdm(total=len(statutes)) as progress:
-                futures = [t.submit(embed_statute, s, model, engine) for s in statutes]
+                # Pass the keyword arguments to the embed function
+                embed_func = lambda s: embed_statute(s, model, engine, **kwargs)
+                futures = [t.submit(embed_func, s) for s in statutes]
                 for _ in as_completed(futures):
                     progress.update(1)
 
@@ -249,13 +253,15 @@ def delete_all_embeddings(model: EmbeddingModel) -> None:
         [session.delete(c) for c in chunks]
         session.commit()
 
+
 def generate_embedding_dump(
-    path: str = DATA_DIR, model: EmbeddingModel = OpenAIADA8K
+    model: EmbeddingModel, path: str = DATA_DIR, **kwargs
 ) -> None:
     """
     Loads the generated embeddings from the database, packs them into a numpy
     matrix and saves them to a file.
 
+    :model: The model to use to generate the embeddings.
     :path: The directory to save the embeddings to.
     """
     engine = create_engine(SQL_ENGINE_PATH)
@@ -272,9 +278,30 @@ def generate_embedding_dump(
         for e in embeddings:
             embedding_list.append(json.loads(e.embedding_vector))
 
-        query = """What is the personal income tax rate?"""
+        query = """
+        (a) General Rule - There is hereby imposed on the taxable income of every individual who is a resident or citizen of New America a tax determined in accordance with the following schedule:
 
-        e1 = model.embed_text(query)
+        1. If the taxable income does not exceed $50,000, the tax is [5%] of the taxable income.
+        2. If the taxable income exceeds $50,000 but does not exceed [$100,000], the tax is [$2,500] plus [10%] of the excess over [$50,000].
+        3. If the taxable income exceeds $100,000 but does not exceed [$200,000], the tax is [$7,500] plus [15%] of the excess over [$100,000].
+        4. If the taxable income exceeds $200,000 but does not exceed [$500,000], the tax is [$22,500] plus [20%] of the excess over [$200,000].
+        5. If the taxable income exceeds $500,000, the tax is [$82,500] plus [25%] of the excess over [$500,000].
+
+        (b) Definitions - For the purpose of this subtitle—
+
+        (1) The term "individual" shall mean a natural person; and
+        (2) The term "taxable income" means the total income, from all sources, less the deductions and exemptions provided by law.
+
+        (c) Adjustments - The Minister of the Treasury shall have the authority to adjust the above thresholds and percentages, not more frequently than once per year, to reflect changes in the economic conditions and cost of living in New America.
+
+        Section 102 - Adjustment for Inflation
+
+        (a) Inflation Adjustment—In the case of any taxable year beginning in a calendar year subsequent to the enactment of this Section, each of the dollar amounts referred to in Section 101 shall be adjusted for inflation.
+
+        (b) Inflation Determination—The adjustment for inflation under this Section shall be determined by the Minister of the Treasury based on the Consumer Price Index for the most recent calendar year ending before the beginning of such taxable year.
+        """
+
+        e1 = model.embed_text(query, **kwargs)
         e1 /= np.linalg.norm(e1)
         print(e1.shape)
 
@@ -303,8 +330,5 @@ def generate_embedding_dump(
 
 if __name__ == "__main__":
     # load_into_db()
-    embed_statutes(model=Together8K)
-    generate_embedding_dump(model=Together8K)
-    #delete_failed_embedding(UAELargeV1)
-    #delete_all_embeddings(Together32K)
-    #delete_all_embeddings(Together8K)
+    #embed_statutes(model=CohereV3English, input_type=InputTypes.SEARCH_DOCUMENT)
+    generate_embedding_dump(model=OpenAIADA8K, input_type=InputTypes.SEARCH_QUERY)

@@ -5,6 +5,8 @@
 """
 import tiktoken
 import together
+import cohere
+from openai import OpenAI
 import numpy as np
 from enum import Enum
 from typing import Any
@@ -17,6 +19,8 @@ openai_client = OpenAI(api_key=OPENAI_API_KEY)
 together.api_key = TOGETHER_API_KEY
 together_client = together.Together()
 
+cohere_client = cohere.Client(COHERE_API_KEY)
+
 
 class Providers(str, Enum):
     """
@@ -25,6 +29,16 @@ class Providers(str, Enum):
 
     OPENAI = "openai"
     TOGETHER = "together"
+    COHERE = "cohere"
+    HUGGING_FACE = "huggingface"
+
+
+class InputTypes(str, Enum):
+    """
+    Types of inputs that can be used to generate embeddings.
+    """
+    SEARCH_DOCUMENT = "search_document"
+    SEARCH_QUERY = "search_query"
 
 
 class EmbeddingModel:
@@ -38,11 +52,12 @@ class EmbeddingModel:
     max_tokens: int = None
 
     @classmethod
-    def embed_text(cls, s: str) -> np.ndarray:
+    def embed_text(cls, s: str, **kwargs) -> np.ndarray:
         """
         Embed :s: using the model :cls:.
 
         :param s: The text to embed.
+        :param kwargs: Arbitrary keyword arguments.
         :return: The embedding of :s:.
         """
         response = cls.client.embeddings.create(input=s, model=cls.name)
@@ -56,32 +71,55 @@ class OpenAIADA8K(EmbeddingModel):
     max_tokens = 8000
 
 
-class Together32K(EmbeddingModel):
-    name = "togethercomputer/m2-bert-80M-32k-retrieval"
+class TogetherEmbeddingModel(EmbeddingModel):
     client = together_client
     provider = Providers.TOGETHER
+
+
+class Together32K(TogetherEmbeddingModel):
+    name = "togethercomputer/m2-bert-80M-32k-retrieval"
     max_tokens = 32000
 
 
-class Together8K(EmbeddingModel):
+class Together8K(TogetherEmbeddingModel):
     name = "togethercomputer/m2-bert-80M-8k-retrieval"
-    client = together_client
-    provider = Providers.TOGETHER
     max_tokens = 8000
 
 
-class UAELarge(EmbeddingModel):
+class UAELarge(TogetherEmbeddingModel):
     name = "WhereIsAI/UAE-Large-V1"
-    client = together_client
-    provider = Providers.TOGETHER
     max_tokens = 384  # Use a slightly smaller chunk size
 
 
-class BAAILargeV1_5(EmbeddingModel):
+class BAAILarge(TogetherEmbeddingModel):
     name = "BAAI/bge-large-en-v1.5"
-    client = together_client
-    provider = Providers.TOGETHER
     max_tokens = 384  # Use a slightly smaller chunk size
+
+
+class MistralLarge(EmbeddingModel):
+    """
+    Embedding model from Mistral. Requires a custom embed_text method.
+    """
+    pass
+
+
+class Cohere(EmbeddingModel):
+    """
+    Embedding model from Cohere. Requires a custom embed_text method.
+    """
+    name = "embed-english-v3.0"
+    provider = Providers.COHERE
+    client = cohere_client
+    max_tokens = 384
+
+    @classmethod
+    def embed_text(cls, s: str, **kwargs) -> np.ndarray:
+        response = cls.client.embed(
+            texts=[s],
+            model=cls.name,
+            input_type=kwargs.get("input_type"),
+        )
+        return np.asarray(response.embeddings[0])
 
 
 def chunk_length(c: str) -> int:
