@@ -279,26 +279,33 @@ def generate_embedding_dump(
             embedding_list.append(json.loads(e.embedding_vector))
 
         query = """
-        (a) General Rule - There is hereby imposed on the taxable income of every individual who is a resident or citizen of New America a tax determined in accordance with the following schedule:
+        (a) Individuals shall be liable for an annual tax on their taxable income as defined in Section 103 based upon the following schedule:
 
-        1. If the taxable income does not exceed $50,000, the tax is [5%] of the taxable income.
-        2. If the taxable income exceeds $50,000 but does not exceed [$100,000], the tax is [$2,500] plus [10%] of the excess over [$50,000].
-        3. If the taxable income exceeds $100,000 but does not exceed [$200,000], the tax is [$7,500] plus [15%] of the excess over [$100,000].
-        4. If the taxable income exceeds $200,000 but does not exceed [$500,000], the tax is [$22,500] plus [20%] of the excess over [$200,000].
-        5. If the taxable income exceeds $500,000, the tax is [$82,500] plus [25%] of the excess over [$500,000].
+        (1) For taxable income not exceeding $10,000, the tax rate shall be 10 percent of such income.
 
-        (b) Definitions - For the purpose of this subtitle—
+        (2) For taxable income exceeding $10,000 but not exceeding $40,000, the tax rate shall be $1,000 plus 15 percent of the excess over $10,000.
 
-        (1) The term "individual" shall mean a natural person; and
-        (2) The term "taxable income" means the total income, from all sources, less the deductions and exemptions provided by law.
+        (3) For taxable income exceeding $40,000 but not exceeding $85,000, the tax rate shall be $5,500 plus 25 percent of the excess over $40,000.
 
-        (c) Adjustments - The Minister of the Treasury shall have the authority to adjust the above thresholds and percentages, not more frequently than once per year, to reflect changes in the economic conditions and cost of living in New America.
+        (4) For taxable income exceeding $85,000 but not exceeding $160,000, the tax rate shall be $16,750 plus 28 percent of the excess over $85,000.
 
-        Section 102 - Adjustment for Inflation
+        (5) For taxable income exceeding $160,000 but not exceeding $200,000, the tax rate shall be $37,300 plus 33 percent of the excess over $160,000.
 
-        (a) Inflation Adjustment—In the case of any taxable year beginning in a calendar year subsequent to the enactment of this Section, each of the dollar amounts referred to in Section 101 shall be adjusted for inflation.
+        (6) For taxable income exceeding $200,000 but not exceeding $500,000, the tax rate shall be $50,300 plus 35 percent of the excess over $200,000.
 
-        (b) Inflation Determination—The adjustment for inflation under this Section shall be determined by the Minister of the Treasury based on the Consumer Price Index for the most recent calendar year ending before the beginning of such taxable year.
+        (7) For taxable income exceeding $500,000, the tax rate shall be $155,300 plus 39.6 percent of the excess over $500,000.
+
+        (b) The rates provided in subsection (a) shall be adjusted annually for inflation in accordance with procedures outlined in Section 104.
+
+        (c) For the purpose of rate schedules, "taxable income" means gross income as defined in Section 102, less deductions and exemptions provided in Sections 105 and 106 respectively.
+
+        (d) In the case of married individuals filing a joint return, or a surviving spouse, the tax rates in subsection (a) shall apply to taxable income levels that are twice those specified in subparagraphs (1) through (7) except as otherwise specifically provided.
+
+        (e) In the case of heads of households, as defined in Section 107, the tax rates in subsection (a) shall apply at 1.5 times the taxable income levels specified in subparagraphs (1) through (7) except as otherwise specifically provided.
+
+        (f) The tax rates for unmarried individuals who are not surviving spouses nor heads of households shall be as provided in this section.
+
+        (g) The term "surviving spouse" and any other terms relating to individual tax status shall be defined in Section 108.
         """
 
         e1 = model.embed_text(query, **kwargs)
