@@ -3,15 +3,17 @@
 
     Author: Viraj Mahesh (virajmahesh@gmail.com)
 """
-import tiktoken
-import together
-import cohere
-from openai import OpenAI
-import numpy as np
 from enum import Enum
 from typing import Any
 
-from config import *
+import cohere
+import numpy as np
+import tiktoken
+import together
+from openai import OpenAI
+
+from config import COHERE_API_KEY, OPENAI_API_KEY, OPENAI_EMBED_MODEL, TOGETHER_API_KEY
+from providers import Providers
 
 openai_encoder = tiktoken.encoding_for_model(OPENAI_EMBED_MODEL)
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
@@ -22,21 +24,11 @@ together_client = together.Together()
 cohere_client = cohere.Client(COHERE_API_KEY)
 
 
-class Providers(str, Enum):
-    """
-    API clients that can be used to generate embeddings.
-    """
-
-    OPENAI = "openai"
-    TOGETHER = "together"
-    COHERE = "cohere"
-    HUGGING_FACE = "huggingface"
-
-
 class InputTypes(str, Enum):
     """
     Types of inputs that can be used to generate embeddings.
     """
+
     SEARCH_DOCUMENT = "search_document"
     SEARCH_QUERY = "search_query"
 
@@ -62,6 +54,10 @@ class EmbeddingModel:
         """
         response = cls.client.embeddings.create(input=s, model=cls.name)
         return np.asarray(response.data[0].embedding)
+
+    @classmethod
+    def file_safe_name(cls) -> str:
+        return cls.name.replace("/", "-")
 
 
 class OpenAIADA8K(EmbeddingModel):
@@ -100,6 +96,7 @@ class MistralLarge(EmbeddingModel):
     """
     Embedding model from Mistral. Requires a custom embed_text method.
     """
+
     pass
 
 
@@ -107,6 +104,7 @@ class Cohere(EmbeddingModel):
     """
     Embedding model from Cohere. Requires a custom embed_text method.
     """
+
     name = "embed-english-v3.0"
     provider = Providers.COHERE
     client = cohere_client
