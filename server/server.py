@@ -66,6 +66,7 @@ def rewrite_query(messages, model: ChatModel) -> str:
     """
     pass
 
+
 def prune(
     query: str, messages: list[dict[str, str]], statutes: list[Statute], model=GPT4Turbo
 ) -> list[Statute]:
