@@ -5,21 +5,24 @@
     Author: Viraj Mahesh (virajmahesh@gmail.com)
 """
 
+import json
 import os
 import re
-import json
-from sqlalchemy import Engine
-from config import *
-from embed import *
-import numpy as np
-from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
 from typing import Any
-from openai import OpenAI
-from bs4 import BeautifulSoup
+
 import matplotlib.pyplot as plt
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from sqlmodel import SQLModel, Field, create_engine, Session, select
+import numpy as np
+from bs4 import BeautifulSoup
+from openai import OpenAI
+from sqlalchemy import Engine
+from sqlalchemy.orm import relationship
+from sqlmodel import Field, Session, SQLModel, create_engine, select
+from tqdm import tqdm
+
+from config import *
+from embed import *
 
 
 class Statute(SQLModel, table=True):
@@ -48,6 +51,17 @@ class Embedding(SQLModel, table=True):
     model: str = Field(default=None)
     provider: str = Field(default=None)
     embedding_vector: str = Field(default=None)
+
+    @property
+    def statute(self) -> Statute:
+        """
+        Get the statute that this embedding belongs to.
+        """
+        engine = create_engine(SQL_ENGINE_PATH)
+        with Session(engine) as session:
+            return session.exec(
+                select(Statute).where(Statute.id == self.statute_id)
+            ).one()
 
 
 def split_tax_code(path: str = TAX_CODE_XHTML_PATH, out_dir=DATA_DIR) -> None:
@@ -281,14 +295,14 @@ def generate_embedding_dump(
 
         embedding_matrix = np.asarray(embedding_list).T
         embedding_matrix /= np.linalg.norm(embedding_matrix, axis=0)
-        
+
         # Save the matrix to a file
         np.save(f"{path}/{model.file_safe_name()}.npy", embedding_matrix)
 
 
 if __name__ == "__main__":
     # load_into_db()
-    #embed_statutes(model=CohereV3English, input_type=InputTypes.SEARCH_DOCUMENT)
+    # embed_statutes(model=CohereV3English, input_type=InputTypes.SEARCH_DOCUMENT)
     generate_embedding_dump(model=Together32K)
     generate_embedding_dump(model=Together8K)
     generate_embedding_dump(model=OpenAIADA8K)

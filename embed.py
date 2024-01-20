@@ -12,7 +12,8 @@ import tiktoken
 import together
 from openai import OpenAI
 
-from config import COHERE_API_KEY, OPENAI_API_KEY, OPENAI_EMBED_MODEL, TOGETHER_API_KEY
+from config import (COHERE_API_KEY, OPENAI_API_KEY, OPENAI_EMBED_MODEL,
+                    TOGETHER_API_KEY)
 from providers import Providers
 
 openai_encoder = tiktoken.encoding_for_model(OPENAI_EMBED_MODEL)
