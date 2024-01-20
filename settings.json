@@ -5,7 +5,7 @@
             "previewLimit": 50,
             "driver": "SQLite",
             "name": "Statute",
-            "database": "${workspaceFolder:taxgpt}/statute.db"
+            "database": "${workspaceFolder:taxgpt}/server/statute.db"
         }
     ]
 }
