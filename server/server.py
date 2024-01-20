@@ -2,14 +2,15 @@
     A FastAPI server to access statutes and embeddings.
 """
 from enum import Enum
+from pprint import pprint
+
 import numpy as np
 import uvicorn
-from pprint import pprint
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, Response
 from sqlmodel import Session, create_engine, select
-from chat import ChatModel, GPT4Turbo
 
+from chat import ChatModel, GPT4Turbo
 from config import DATA_DIR, SQL_ENGINE_PATH
 from embed import EmbeddingModel, OpenAIADA8K, UAELarge
 from statute import Embedding, Statute
@@ -176,5 +177,4 @@ def respond(messages: list[dict[str, str]]) -> str:
 
 
 if __name__ == "__main__":
-    respond([{"role": "user", "content": "What is the definition of income?"}])
-    # uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
